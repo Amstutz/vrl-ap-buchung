@@ -821,15 +821,45 @@ $('empdel').onclick=async()=>{
   body.append(ok,no);
 };
 
+// ---------- Demo-Datenbank im Session Storage (ohne Backend) ----------
+function demoDb(){
+  const KEY='ap-demo-v1', mem={};
+  const rd=()=>{try{const v=sessionStorage.getItem(KEY);if(v)return JSON.parse(v)}catch(e){}return null};
+  let data=rd()||mem.d;
+  if(!data){
+    data={bookings:{},fixed:{},releases:{},employees:{}};
+    const now=new Date().toISOString();
+    for(const [id,n] of [['e_kmk','KMK'],['e_vsl','VSL'],['e_1','Anna Meier'],['e_2','Beat Keller'],['e_3','Carla Rossi']]) data.employees[id]={name:n,at:now};
+    for(const [n,ds] of [['KMK',['329-1','329-2']],['VSL',['341-1','341-2','341-3','341-4']]])
+      for(const desk of ds) for(let wd=1;wd<=5;wd++) for(const half of ['vm','nm']) data.fixed[`${desk}_${wd}_${half}`]={desk,wd,half,name:n};
+  }
+  const save=()=>{mem.d=data;try{sessionStorage.setItem(KEY,JSON.stringify(data))}catch(e){}};
+  save();
+  const subs=[]; let n=0;
+  const notify=()=>{save();subs.forEach(f=>f())};
+  const copy=x=>JSON.parse(JSON.stringify(x));
+  const coll=name=>{
+    const f=[];
+    const q={where(a,o,v){f.push([a,o,v]);return q},
+      limit(){return q},
+      _docs(){return Object.entries(data[name]).filter(([id,x])=>f.every(([a,o,v])=>o==='>='?x[a]>=v:o==='<='?x[a]<=v:o==='=='?x[a]===v:true)).map(([id,x])=>({id,data:()=>copy(x)}))},
+      get:async()=>{const d=q._docs();return{docs:d,empty:!d.length}},
+      onSnapshot(cb){const fn=()=>cb({docs:q._docs()});subs.push(fn);setTimeout(fn,0);return()=>{const i=subs.indexOf(fn);if(i>=0)subs.splice(i,1)}},
+      add:async x=>{const id='e_'+Date.now().toString(36)+(++n);data[name][id]=copy(x);notify();return{id}}};
+    return q;
+  };
+  const doc=p=>{const [c,id]=p.split('/');return{set:async x=>{data[c][id]=copy(x);notify()},delete:async()=>{delete data[c][id];notify()}}};
+  return {collection:coll,doc};
+}
+
 renderEmpSelect();
 setTab(tab);
 (async()=>{
-  const user=await window.claude?.use?.('user');
-  if(user){ uid=await user.id(); isAdmin=await user.canEdit(); const cw=await user.can('data.write'); if(cw===false) canWrite=false; viewerName=((await user.me()).name||'').trim(); }
-  dl=await window.claude?.use?.('downloads');
-  db=await window.claude?.use?.('db');
+  uid='demo'; isAdmin=true;
+  dl={save:async({filename,data})=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([data],{type:'text/csv;charset=utf-8'}));a.download=filename;document.body.appendChild(a);a.click();a.remove();}};
+  db=demoDb();
   if(!db){ setStatus('Keine Verbindung zur Buchungsliste – nur Ansicht.',true); return; }
-  setStatus(canWrite?'Live – Buchungen sind für alle sofort sichtbar.':'Nur Lesen – du hast keine Schreibrechte auf dieser Seite.');
+  setStatus(canWrite?'Demo – Daten bleiben nur in diesem Browser-Tab (Session Storage).':'Nur Lesen – du hast keine Schreibrechte auf dieser Seite.');
   db.collection('employees').onSnapshot(s=>{
     employees={};s.docs.forEach(d=>{const v=d.data();if(v&&v.name)employees[d.id]={id:d.id,name:v.name}});
     if(!emp()&&viewerName){const m=Object.values(employees).find(e=>!isLocked(e.name)&&e.name.toLowerCase()===viewerName.toLowerCase());if(m&&!empId){empId=m.id;try{localStorage.setItem('deskemp',empId)}catch(e){}}}
